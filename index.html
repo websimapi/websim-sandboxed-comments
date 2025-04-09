@@ -209,6 +209,8 @@
       const container = template.content.cloneNode(true);
       
       const commentContainer = container.querySelector('.comment-container');
+      // Add data attribute for finding the comment later
+      commentContainer.setAttribute('data-comment-id', comment.id);
       if (isInDatabase) {
         commentContainer.classList.add('in-database');
       }
@@ -308,6 +310,12 @@
           reply_count: comment.reply_count,
           created_at: comment.created_at
         });
+        
+        // After successful sync, find and update the comment's visual style
+        const commentElement = document.querySelector(`.comment-container[data-comment-id="${comment.id}"]`);
+        if (commentElement) {
+          commentElement.classList.add('in-database');
+        }
         
         console.log('Successfully synced new comment to database:', comment.id);
         return true;
