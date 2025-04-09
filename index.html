@@ -198,80 +198,7 @@
       `).join('');
     }
 
-    async function getLLMResponse(comment) {
-      try {
-        const completion = await websim.chat.completions.create({
-          messages: [
-            {
-              role: "system",
-              content: `You are a creative web designer. Convert the user's request into a web component design.
-              Respond with JSON in this exact format:
-              {
-                "html": "the HTML markup for the component",
-                "css": "the CSS styles needed",
-                "js": "any JavaScript required (if needed)",
-                "description": "brief description of what you created"
-              }
-              Keep the design simple, elegant, and self-contained. Use inline SVG instead of images.
-              Ensure all CSS class names are prefixed with a unique identifier to avoid conflicts.`
-            },
-            {
-              role: "user",
-              content: comment.raw_content
-            }
-          ],
-          json: true
-        });
-
-        // Parse and validate the response
-        const response = JSON.parse(completion.content);
-        return response;
-      } catch (err) {
-        console.error('Error getting LLM response:', err);
-        return null;
-      }
-    }
-
-    async function syncCommentToDatabase(comment) {
-      try {
-        // First get ALL existing comments from database
-        const existingComments = await room.collection('comments').getList();
-        
-        // Check if this comment already exists
-        const commentExists = existingComments.some(dbComment => 
-          dbComment.comment_id === comment.id
-        );
-
-        if (commentExists) {
-          console.log('Comment already exists in database, skipping sync:', comment.id);
-          return;
-        }
-
-        // Get LLM response before database insertion
-        const llmResponse = await getLLMResponse(comment);
-
-        // Create a record in our database with comment data
-        await room.collection('comments').create({
-          comment_id: comment.id,
-          project_id: comment.project_id,
-          content: comment.raw_content,
-          parent_comment_id: comment.parent_comment_id,
-          pinned: comment.pinned,
-          pinned_by: comment.pinned_by?.username,
-          reactions: JSON.stringify(comment.reactions),
-          reply_count: comment.reply_count,
-          created_at: comment.created_at,
-          // Add the LLM response data
-          llm_response: llmResponse ? JSON.stringify(llmResponse) : null
-        });
-        
-        console.log('Successfully synced comment to database:', comment.id);
-      } catch (err) {
-        console.error('Error syncing comment to database:', err);
-      }
-    }
-
-    async function renderComment(comment, template, commentsDiv, index, iframeMap) {
+    async function renderComment(commentData, template, commentsDiv, index, iframeMap) {
       const container = template.content.cloneNode(true);
       
       const avatar = container.querySelector('.avatar');
@@ -284,49 +211,30 @@
 
       iframeMap.set(index, iframe);
 
-      // Set up header info
-      avatar.src = `https://images.websim.ai/avatar/${comment.author.username}`;
-      username.href = `https://websim.ai/@${comment.author.username}`;
-      username.textContent = '@' + comment.author.username;
-      timestamp.textContent = await formatTimestamp(comment.created_at);
+      // Set up header info from database record
+      avatar.src = `https://images.websim.ai/avatar/${commentData.username}`;
+      username.href = `https://websim.ai/@${commentData.username}`;
+      username.textContent = '@' + commentData.username;
+      timestamp.textContent = await formatTimestamp(commentData.created_at);
 
       // Show pinned status
-      if (comment.pinned) {
+      if (commentData.pinned) {
         pinnedBadge.style.display = 'inline';
-        if (comment.pinned_by) {
-          pinnedBadge.title = `Pinned by @${comment.pinned_by.username}`;
+        if (commentData.pinned_by) {
+          pinnedBadge.title = `Pinned by @${commentData.pinned_by}`;
         }
       }
 
-      // Show reactions
-      renderReactions(comment.reactions, reactionList);
+      // Show reactions from parsed JSON string
+      const reactions = JSON.parse(commentData.reactions || '[]');
+      renderReactions(reactions, reactionList);
 
       // Show reply count
-      if (comment.reply_count > 0) {
-        replyCount.textContent = `${comment.reply_count} ${comment.reply_count === 1 ? 'reply' : 'replies'}`;
+      if (commentData.reply_count > 0) {
+        replyCount.textContent = `${commentData.reply_count} ${commentData.reply_count === 1 ? 'reply' : 'replies'}`;
       }
 
       // Create sandboxed comment content
-      let llmContent = '';
-      
-      // Check if we have an LLM response in our database
-      const dbComment = (await room.collection('comments').filter({ comment_id: comment.id }).getList())[0];
-      
-      if (dbComment?.llm_response) {
-        try {
-          const llmResponse = JSON.parse(dbComment.llm_response);
-          llmContent = `
-            <div class="llm-response">
-              <style>${llmResponse.css}</style>
-              ${llmResponse.html}
-              <script>${llmResponse.js}<\/script>
-            </div>
-          `;
-        } catch (err) {
-          console.error('Error parsing LLM response:', err);
-        }
-      }
-
       const html = `<!DOCTYPE html>
         <html>
         <head>
@@ -340,17 +248,10 @@
             p { margin: 0 0 1em; }
             a { color: #0066cc; }
             img { max-width: 100%; height: auto; }
-            .llm-response {
-              margin-top: 20px;
-              padding: 15px;
-              border: 1px solid #eee;
-              border-radius: 8px;
-            }
           </style>
         </head>
         <body>
-          <div class="user-content">${comment.raw_content || ''}</div>
-          ${llmContent}
+          ${commentData.content || ''}
           <script>
             window.addEventListener('load', () => {
               const height = document.body.scrollHeight;
@@ -371,38 +272,56 @@
       return {container, blobUrl};
     }
 
-    async function loadAndSyncComments(checkNewOnly = false) {
+    async function syncCommentToDatabase(comment) {
+      try {
+        // First get ALL existing comments from database
+        const existingComments = await room.collection('comments').getList();
+        
+        // Check if this comment already exists
+        const commentExists = existingComments.some(dbComment => 
+          dbComment.comment_id === comment.id
+        );
+
+        if (commentExists) {
+          console.log('Comment already exists in database, skipping sync:', comment.id);
+          return;
+        }
+
+        // Create a record in our database with comment data
+        await room.collection('comments').create({
+          comment_id: comment.id,
+          project_id: comment.project_id,
+          content: comment.raw_content,
+          parent_comment_id: comment.parent_comment_id,
+          pinned: comment.pinned,
+          pinned_by: comment.pinned_by?.username,
+          reactions: JSON.stringify(comment.reactions),
+          reply_count: comment.reply_count,
+          created_at: comment.created_at
+        });
+        
+        console.log('Successfully synced comment to database:', comment.id);
+      } catch (err) {
+        console.error('Error syncing comment to database:', err);
+      }
+    }
+
+    async function loadAndRenderComments(checkNewOnly = false) {
       if (!projectId) {
         projectId = (await window.websim.getCurrentProject()).id;
       }
 
-      const user = await getCurrentUser();
+      // Get comments from database instead of API
+      const dbComments = await room.collection('comments')
+        .filter({ project_id: projectId })
+        .getList();
+
+      // Sort by created_at descending (newest first)
+      dbComments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       
-      // Get all comments from API
-      const response = await fetch(`/api/v1/projects/${projectId}/comments`);
-      const data = await response.json();
-      
-      if (data.comments.data.length === 0) return;
+      if (dbComments.length === 0) return;
 
-      // Get ALL comments from our database
-      const dbComments = await room.collection('comments').getList();
-      
-      // Create a map for faster lookups
-      const existingCommentMap = new Map(
-        dbComments.map(comment => [comment.comment_id, comment])
-      );
-
-      // Check each API comment and sync if needed
-      const syncPromises = data.comments.data.map(async ({comment}) => {
-        if (!existingCommentMap.has(comment.id) && comment.author.username === user.username) {
-          await syncCommentToDatabase(comment);
-        }
-      });
-
-      // Wait for all sync operations to complete
-      await Promise.all(syncPromises);
-
-      const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
+      const latestTimestamp = new Date(dbComments[0].created_at);
       
       if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
         return;
@@ -417,8 +336,8 @@
       const iframeMap = new Map();
       const blobUrls = [];
 
-      // Render new comments
-      for (const [index, {comment}] of data.comments.data.entries()) {
+      // Render comments from database
+      for (const [index, comment] of dbComments.entries()) {
         if (checkNewOnly && lastCommentTimestamp && new Date(comment.created_at) <= lastCommentTimestamp) {
           continue;
         }
@@ -459,17 +378,41 @@
       });
     }
 
-    // Initial load
-    loadAndSyncComments();
+    async function initializeAndSync() {
+      // Initial API fetch to sync new comments to database
+      if (!projectId) {
+        projectId = (await window.websim.getCurrentProject()).id;
+      }
+
+      const response = await fetch(`/api/v1/projects/${projectId}/comments`);
+      const data = await response.json();
+      
+      const user = await getCurrentUser();
+      
+      // Sync user's comments to database
+      for (const {comment} of data.comments.data) {
+        if (comment.author.username === user.username) {
+          await syncCommentToDatabase(comment);
+        }
+      }
+
+      // Initial render from database
+      await loadAndRenderComments();
+    }
+
+    // Initial load and sync
+    initializeAndSync();
 
     // Set up periodic checking for new comments
-    setInterval(() => {
-      loadAndSyncComments(true);
+    setInterval(async () => {
+      await initializeAndSync(); // Sync first
+      await loadAndRenderComments(true); // Then render any new ones
     }, REFRESH_INTERVAL);
 
     // Subscribe to database changes
-    room.collection('comments').subscribe(function(comments) {
+    room.collection('comments').subscribe(async function(comments) {
       console.log('Database comments updated:', comments);
+      await loadAndRenderComments(); // Re-render when database changes
     });
   </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
