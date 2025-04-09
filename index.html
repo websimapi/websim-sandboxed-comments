@@ -273,17 +273,13 @@
 
     async function syncCommentToDatabase(comment) {
       try {
-        // Check if comment already exists by filtering on unique identifiers
-        const existingComments = room.collection('comments')
-          .filter({
-            comment_id: comment.id,
-            project_id: comment.project_id,
-            created_at: comment.created_at
-          })
+        // Check if comment already exists in database
+        const existingComment = room.collection('comments')
+          .filter({ comment_id: comment.id })
           .getList();
 
-        // Only create if no matching comment exists
-        if (existingComments.length === 0) {
+        // Only create if comment doesn't already exist
+        if (existingComment.length === 0) {
           await room.collection('comments').create({
             comment_id: comment.id,
             project_id: comment.project_id,
