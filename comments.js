@@ -2,7 +2,7 @@
 const room = new WebsimSocket();
     
 const REFRESH_INTERVAL = 30000; // Check for new comments every 30 seconds
-const DB_CHECK_INTERVAL = 10000; // Check database for new gold comments every 10 seconds
+const DB_CHECK_INTERVAL = 5000; // Check database for new gold comments every 5 seconds
 let lastCommentTimestamp = null;
 let projectId = null;
 let currentUser = null;
@@ -415,16 +415,18 @@ async function checkForNewGoldComments() {
     
     // Update with fresh comments list after cleaning up
     const updatedDbComments = await room.collection('comments').getList();
-    const newGoldCommentIds = new Set(updatedDbComments.map(c => c.comment_id));
-
+    const dbCommentIds = new Set(updatedDbComments.map(c => c.comment_id));
+    
     // Get all comment containers from the page
     const commentContainers = document.querySelectorAll('.comment-container');
     
+    // Check each comment on the page
     commentContainers.forEach(container => {
       const commentId = container.dataset.commentId;
       
       // If comment is in database but doesn't have gold outline
-      if (newGoldCommentIds.has(commentId) && !container.classList.contains('in-database')) {
+      if (dbCommentIds.has(commentId) && !container.classList.contains('in-database')) {
+        console.log(`Updating comment ${commentId} to show gold outline`);
         // Add gold outline with a nice transition
         container.style.transition = 'border-color 0.5s ease-in-out, box-shadow 0.5s ease-in-out';
         container.classList.add('in-database');
@@ -434,7 +436,7 @@ async function checkForNewGoldComments() {
     });
 
     // Update the goldCommentIds set to match database state
-    goldCommentIds = newGoldCommentIds;
+    goldCommentIds = dbCommentIds;
     
   } catch (err) {
     console.error('Error checking for new gold comments:', err);
