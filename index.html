@@ -10,16 +10,6 @@
       padding: 15px;
       border: 1px solid #ccc;
       border-radius: 8px;
-      transition: all 0.5s ease-out;
-      transform-origin: top;
-      opacity: 1;
-      max-height: 2000px; /* Large enough to contain comment */
-    }
-
-    .comment-container.new-comment {
-      opacity: 0;
-      max-height: 0;
-      transform: translateY(-20px);
     }
 
     .comment-iframe {
@@ -87,9 +77,20 @@
       margin-left: 10px;
     }
 
-    /* Ensure smooth height transitions */
-    #comments {
+    /* Add animation styles */
+    .comment-container {
       transition: all 0.5s ease-out;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .comment-container.new-comment {
+      opacity: 0;
+      transform: translateY(-20px);
+    }
+
+    #comments {
+      position: relative;
     }
   </style>
 </head>
@@ -138,7 +139,7 @@
       `).join('');
     }
 
-    async function renderComment(comment, template, commentsDiv, index, iframeMap, checkNewOnly) {
+    async function renderComment(comment, template, commentsDiv, index, iframeMap) {
       const container = template.content.cloneNode(true);
       
       const avatar = container.querySelector('.avatar');
@@ -208,24 +209,7 @@
       const blobUrl = URL.createObjectURL(blob);
       iframe.src = blobUrl;
       
-      // Add new-comment class for animation
-      container.querySelector('.comment-container').classList.add('new-comment');
-      
-      if (checkNewOnly) {
-        commentsDiv.insertBefore(container, commentsDiv.firstChild);
-        
-        // Trigger animation after brief delay to ensure DOM is ready
-        requestAnimationFrame(() => {
-          setTimeout(() => {
-            container.querySelector('.comment-container').classList.remove('new-comment');
-          }, 50);
-        });
-      } else {
-        commentsDiv.appendChild(container);
-      }
-
-      // Clean up blob URL when unloading
-      return blobUrl;
+      return {container, blobUrl};
     }
 
     async function loadComments(checkNewOnly = false) {
@@ -240,13 +224,11 @@
 
       const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
       
-      // If checking for new comments and no new ones exist, return
       if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
         return;
       }
       
       if (!checkNewOnly) {
-        // Clear existing comments if doing full load
         document.getElementById('comments').innerHTML = '';
       }
 
@@ -261,9 +243,24 @@
           continue;
         }
 
-        const blobUrl = await renderComment(comment, template, commentsDiv, index, iframeMap, checkNewOnly);
-        
+        const {container, blobUrl} = await renderComment(comment, template, commentsDiv, index, iframeMap);
         blobUrls.push(blobUrl);
+        
+        if (checkNewOnly) {
+          // Add new comment with animation
+          const firstChild = container.firstElementChild;
+          firstChild.classList.add('new-comment');
+          commentsDiv.insertBefore(container, commentsDiv.firstChild);
+          
+          // Trigger animation after a small delay
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              firstChild.classList.remove('new-comment');
+            });
+          });
+        } else {
+          commentsDiv.appendChild(container);
+        }
       }
 
       lastCommentTimestamp = latestTimestamp;
