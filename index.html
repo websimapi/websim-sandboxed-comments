@@ -273,15 +273,18 @@
 
     async function syncCommentToDatabase(comment) {
       try {
-        // Check if comment already exists in database
-        const existingComment = room.collection('comments')
-          .filter({ comment_id: comment.id })
+        // First check if comment already exists
+        const existingComment = room.collection('comments_v2')
+          .filter({ 
+            comment_id: comment.id,
+            project_id: comment.project_id 
+          })
           .getList();
 
-        // Only create if comment doesn't already exist
+        // If comment doesn't exist yet, create it
         if (existingComment.length === 0) {
-          await room.collection('comments').create({
-            comment_id: comment.id,
+          await room.collection('comments_v2').create({ 
+            comment_id: comment.id, 
             project_id: comment.project_id,
             content: comment.raw_content,
             parent_comment_id: comment.parent_comment_id,
@@ -293,7 +296,12 @@
           });
         }
       } catch (err) {
-        console.error('Error syncing comment to database:', err);
+        // Specific error handling for duplicate entries
+        if (err.message?.includes('unique constraint')) {
+          console.log('Comment already exists in database:', comment.id);
+        } else {
+          console.error('Error syncing comment to database:', err);
+        }
       }
     }
 
@@ -310,17 +318,20 @@
       
       if (data.comments.data.length === 0) return;
 
-      // Get all comments from our database for this project
-      const dbComments = room.collection('comments')
+      // Get all comments from our database for this project using the new collection
+      const dbComments = room.collection('comments_v2')
         .filter({ project_id: projectId })
         .getList();
 
-      // Create a map of existing comment IDs in our database
-      const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
+      // Create a map for faster lookups
+      const existingComments = new Map(
+        dbComments.map(c => [`${c.comment_id}-${c.project_id}`, c])
+      );
 
-      // Check each API comment and sync if needed
+      // Check each API comment and sync if needed 
       for (const {comment} of data.comments.data) {
-        if (!existingCommentIds.has(comment.id) && comment.author.username === user.username) {
+        const key = `${comment.id}-${comment.project_id}`;
+        if (!existingComments.has(key) && comment.author.username === user.username) {
           await syncCommentToDatabase(comment);
         }
       }
@@ -391,7 +402,7 @@
     }, REFRESH_INTERVAL);
 
     // Subscribe to database changes
-    room.collection('comments').subscribe(function(comments) {
+    room.collection('comments_v2').subscribe(function(comments) {
       console.log('Database comments updated:', comments);
     });
   </script>
