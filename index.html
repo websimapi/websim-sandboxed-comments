@@ -124,10 +124,12 @@
     const room = new WebsimSocket();
     
     const REFRESH_INTERVAL = 30000; // Check for new comments every 30 seconds
+    const DB_CHECK_INTERVAL = 10000; // Check database for new gold comments every 10 seconds
     let lastCommentTimestamp = null;
     let projectId = null;
     let currentUser = null;
     const iframeMap = new Map();
+    let goldCommentIds = new Set(); // Track which comments are gold
 
     // Add emoji mapping object
     const emojiMap = {
@@ -209,10 +211,10 @@
       const container = template.content.cloneNode(true);
       
       const commentContainer = container.querySelector('.comment-container');
-      // Add data attribute for finding the comment later
-      commentContainer.setAttribute('data-comment-id', comment.id);
+      commentContainer.dataset.commentId = comment.id; // Store comment ID for gold outline updates
       if (isInDatabase) {
         commentContainer.classList.add('in-database');
+        goldCommentIds.add(comment.id); // Track gold comment
       }
       
       const avatar = container.querySelector('.avatar');
@@ -311,12 +313,6 @@
           created_at: comment.created_at
         });
         
-        // After successful sync, find and update the comment's visual style
-        const commentElement = document.querySelector(`.comment-container[data-comment-id="${comment.id}"]`);
-        if (commentElement) {
-          commentElement.classList.add('in-database');
-        }
-        
         console.log('Successfully synced new comment to database:', comment.id);
         return true;
       } catch (err) {
@@ -395,6 +391,37 @@
       }, { once: true });
     }
 
+    async function checkForNewGoldComments() {
+      try {
+        // Get latest database comments
+        const dbComments = await room.collection('comments').getList();
+        const newGoldCommentIds = new Set(dbComments.map(c => c.comment_id));
+
+        // Find comments that weren't gold before but are now
+        const commentsToUpdate = Array.from(newGoldCommentIds).filter(id => !goldCommentIds.has(id));
+
+        if (commentsToUpdate.length > 0) {
+          // Update the goldCommentIds set
+          goldCommentIds = newGoldCommentIds;
+
+          // Find and update the UI for newly gold comments
+          const commentContainers = document.querySelectorAll('.comment-container');
+          commentContainers.forEach(container => {
+            // Extract comment ID from the iframe src or data attribute
+            const commentId = container.dataset.commentId;
+            
+            if (commentsToUpdate.includes(commentId)) {
+              // Add gold outline with a nice transition
+              container.style.transition = 'border-color 0.5s ease-in-out, box-shadow 0.5s ease-in-out';
+              container.classList.add('in-database');
+            }
+          });
+        }
+      } catch (err) {
+        console.error('Error checking for new gold comments:', err);
+      }
+    }
+
     // Initial load
     loadAndSyncComments();
 
@@ -402,6 +429,9 @@
     setInterval(() => {
       loadAndSyncComments(true);
     }, REFRESH_INTERVAL);
+
+    // Set up periodic checking for new gold comments
+    setInterval(checkForNewGoldComments, DB_CHECK_INTERVAL);
 
     // Subscribe to database changes
     room.collection('comments').subscribe(function(comments) {
