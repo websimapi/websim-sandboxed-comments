@@ -98,6 +98,29 @@
       border: 2px solid gold;
       box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
     }
+
+    /* Add styles for replies */
+    .replies-container {
+      margin-left: 20px;
+      padding-left: 15px;
+      border-left: 2px solid #ddd;
+      display: none;
+    }
+
+    .replies-container.expanded {
+      display: block;
+    }
+
+    .loading-replies {
+      color: #666;
+      font-style: italic;
+      padding: 10px 0;
+    }
+
+    /* Add transition for smooth expand/collapse */
+    .replies-container {
+      transition: all 0.3s ease-out;
+    }
   </style>
 </head>
 <body>
@@ -116,6 +139,13 @@
         <div class="reaction-list"></div>
         <div class="reply-count"></div>
       </div>
+    </div>
+  </template>
+
+  <!-- Add reply template -->
+  <template id="replies-template">
+    <div class="replies-container">
+      <div class="loading-replies">Loading replies...</div>
     </div>
   </template>
 
@@ -207,6 +237,48 @@
       `).join('');
     }
 
+    async function loadReplies(commentId, repliesContainer) {
+      try {
+        // Fetch replies from API
+        const response = await fetch(`/api/v1/projects/${projectId}/comments/${commentId}/replies`);
+        const data = await response.json();
+        
+        repliesContainer.innerHTML = ''; // Clear loading message
+        
+        // Get template for rendering individual replies
+        const template = document.getElementById('comment-template');
+        const blobUrls = [];
+
+        // Get database comments to check gold status
+        const dbComments = await room.collection('comments').getList();
+        const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
+
+        // Render each reply
+        for (const [index, reply] of data.replies.data.entries()) {
+          const isInDatabase = existingCommentIds.has(reply.comment.id);
+          const {container, blobUrl} = await renderComment(
+            reply.comment,
+            template,
+            repliesContainer,
+            `reply-${commentId}-${index}`,
+            iframeMap,
+            isInDatabase
+          );
+          blobUrls.push(blobUrl);
+          repliesContainer.appendChild(container);
+        }
+
+        // Clean up blob URLs when unloading
+        window.addEventListener('unload', () => {
+          blobUrls.forEach(URL.revokeObjectURL);
+        }, { once: true });
+
+      } catch (err) {
+        console.error('Error loading replies:', err);
+        repliesContainer.innerHTML = '<div class="loading-replies">Error loading replies</div>';
+      }
+    }
+
     async function renderComment(comment, template, commentsDiv, index, iframeMap, isInDatabase) {
       const container = template.content.cloneNode(true);
       
@@ -283,6 +355,26 @@
       const blob = new Blob([html], {type: 'text/html'});
       const blobUrl = URL.createObjectURL(blob);
       iframe.src = blobUrl;
+      
+      // Add replies container and click handler if there are replies
+      if (comment.reply_count > 0) {
+        const replyCountElement = container.querySelector('.reply-count');
+        const repliesTemplate = document.getElementById('replies-template');
+        const repliesContainer = repliesTemplate.content.cloneNode(true).querySelector('.replies-container');
+        
+        container.appendChild(repliesContainer);
+
+        let repliesLoaded = false;
+        replyCountElement.addEventListener('click', async () => {
+          repliesContainer.classList.toggle('expanded');
+          
+          // Load replies first time container is expanded
+          if (!repliesLoaded) {
+            await loadReplies(comment.id, repliesContainer);
+            repliesLoaded = true;
+          }
+        });
+      }
       
       return {container, blobUrl};
     }
