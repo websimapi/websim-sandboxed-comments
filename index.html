@@ -114,9 +114,20 @@
   </template>
 
   <script>
+    // Initialize WebsimSocket for database access
+    const room = new WebsimSocket();
+    
     const REFRESH_INTERVAL = 30000; // Check for new comments every 30 seconds
     let lastCommentTimestamp = null;
     let projectId = null;
+    let currentUser = null;
+
+    async function getCurrentUser() {
+      if (!currentUser) {
+        currentUser = await window.websim.getUser();
+      }
+      return currentUser;
+    }
 
     async function formatTimestamp(timestamp) {
       const date = new Date(timestamp);
@@ -212,15 +223,52 @@
       return {container, blobUrl};
     }
 
-    async function loadComments(checkNewOnly = false) {
+    async function syncCommentToDatabase(comment) {
+      try {
+        // Create a record in our database with comment data
+        await room.collection('comments').create({
+          comment_id: comment.id,
+          project_id: comment.project_id,
+          content: comment.raw_content,
+          parent_comment_id: comment.parent_comment_id,
+          pinned: comment.pinned,
+          pinned_by: comment.pinned_by?.username,
+          reactions: JSON.stringify(comment.reactions),
+          reply_count: comment.reply_count,
+          created_at: comment.created_at
+        });
+      } catch (err) {
+        console.error('Error syncing comment to database:', err);
+      }
+    }
+
+    async function loadAndSyncComments(checkNewOnly = false) {
       if (!projectId) {
         projectId = (await window.websim.getCurrentProject()).id;
       }
+
+      const user = await getCurrentUser();
       
+      // Get all comments from API
       const response = await fetch(`/api/v1/projects/${projectId}/comments`);
       const data = await response.json();
       
       if (data.comments.data.length === 0) return;
+
+      // Get all comments from our database for this project
+      const dbComments = room.collection('comments')
+        .filter({ project_id: projectId })
+        .getList();
+
+      // Create a map of existing comment IDs in our database
+      const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
+
+      // Check each API comment and sync if needed
+      for (const {comment} of data.comments.data) {
+        if (!existingCommentIds.has(comment.id) && comment.author.username === user.username) {
+          await syncCommentToDatabase(comment);
+        }
+      }
 
       const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
       
@@ -247,12 +295,10 @@
         blobUrls.push(blobUrl);
         
         if (checkNewOnly) {
-          // Add new comment with animation
           const firstChild = container.firstElementChild;
           firstChild.classList.add('new-comment');
           commentsDiv.insertBefore(container, commentsDiv.firstChild);
           
-          // Trigger animation after a small delay
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
               firstChild.classList.remove('new-comment');
@@ -282,12 +328,17 @@
     }
 
     // Initial load
-    loadComments();
+    loadAndSyncComments();
 
     // Set up periodic checking for new comments
     setInterval(() => {
-      loadComments(true);
+      loadAndSyncComments(true);
     }, REFRESH_INTERVAL);
+
+    // Subscribe to database changes
+    room.collection('comments').subscribe(function(comments) {
+      console.log('Database comments updated:', comments);
+    });
   </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
