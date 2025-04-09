@@ -43,16 +43,13 @@
   color: #666;
   font-size: 0.9em;
   margin: 10px 0;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
+  position: relative;
 }
 
 .reaction-list {
   display: flex;
   gap: 10px;
   margin-top: 10px;
-  flex: 1;
 }
 
 .reaction {
@@ -65,8 +62,10 @@
 .reply-count {
   color: #0066cc;
   cursor: pointer;
-  padding-left: 15px;
-  white-space: nowrap;
+  margin-bottom: 8px;
+  position: absolute;
+  right: 0;
+  bottom: 0;
 }
 
 .pinned-badge {
