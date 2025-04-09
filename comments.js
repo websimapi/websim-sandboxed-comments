@@ -2,7 +2,7 @@
 const room = new WebsimSocket();
     
 const REFRESH_INTERVAL = 30000; // Check for new comments every 30 seconds
-const DB_CHECK_INTERVAL = 5000; // Check database for new gold comments every 5 seconds
+const DB_CHECK_INTERVAL = 10000; // Check database for new gold comments every 10 seconds
 let lastCommentTimestamp = null;
 let projectId = null;
 let currentUser = null;
@@ -323,7 +323,12 @@ async function loadAndSyncComments(checkNewOnly = false) {
       
       // After rendering, if it's the current user's comment and not already in database, sync it
       if (comment.author.username === user.username && !isInDatabase) {
-        await syncCommentToDatabase(comment);
+        const syncSuccess = await syncCommentToDatabase(comment);
+        if (syncSuccess) {
+          // Update gold status immediately if sync was successful
+          const commentElement = container.querySelector('.comment-container');
+          commentElement.classList.add('in-database');
+        }
       }
       
       if (checkNewOnly) {
@@ -333,7 +338,7 @@ async function loadAndSyncComments(checkNewOnly = false) {
         if (comment.pinned) {
           // Find the first non-pinned comment to insert before
           const firstNonPinned = Array.from(commentsDiv.children).find(
-            child => !child.querySelector('.pinned-badge').style.display === 'inline'
+            child => child.querySelector('.pinned-badge').style.display === 'none'
           );
           if (firstNonPinned) {
             commentsDiv.insertBefore(container, firstNonPinned);
@@ -368,6 +373,17 @@ async function loadAndSyncComments(checkNewOnly = false) {
 
 async function checkForNewGoldComments() {
   try {
+    // Get the current project ID if needed
+    if (!projectId) {
+      projectId = (await window.websim.getCurrentProject()).id;
+    }
+    
+    // Get latest API comments to make sure our view is in sync
+    const apiResponse = await fetch(`/api/v1/projects/${projectId}/comments`);
+    const apiData = await apiResponse.json();
+    const apiComments = apiData.comments.data.map(item => item.comment);
+    const apiCommentIds = new Set(apiComments.map(c => c.id));
+    
     // Get latest database comments
     const dbComments = await room.collection('comments').getList();
     
@@ -415,28 +431,43 @@ async function checkForNewGoldComments() {
     
     // Update with fresh comments list after cleaning up
     const updatedDbComments = await room.collection('comments').getList();
-    const dbCommentIds = new Set(updatedDbComments.map(c => c.comment_id));
-    
+    const newGoldCommentIds = new Set(updatedDbComments.map(c => c.comment_id));
+
     // Get all comment containers from the page
     const commentContainers = document.querySelectorAll('.comment-container');
+    const displayedCommentIds = new Set();
     
-    // Check each comment on the page
     commentContainers.forEach(container => {
       const commentId = container.dataset.commentId;
+      displayedCommentIds.add(commentId);
       
       // If comment is in database but doesn't have gold outline
-      if (dbCommentIds.has(commentId) && !container.classList.contains('in-database')) {
-        console.log(`Updating comment ${commentId} to show gold outline`);
+      if (newGoldCommentIds.has(commentId) && !container.classList.contains('in-database')) {
         // Add gold outline with a nice transition
         container.style.transition = 'border-color 0.5s ease-in-out, box-shadow 0.5s ease-in-out';
         container.classList.add('in-database');
         // Update our tracking set
         goldCommentIds.add(commentId);
       }
+      
+      // If comment is not in API anymore, fade it out and remove
+      if (!apiCommentIds.has(commentId)) {
+        container.style.transition = 'opacity 0.5s ease-in-out, transform 0.5s ease-in-out';
+        container.style.opacity = '0';
+        container.style.transform = 'translateY(-20px)';
+        setTimeout(() => container.remove(), 500);
+      }
     });
+    
+    // Check for API comments not displayed and add them
+    const newApiComments = apiComments.filter(comment => !displayedCommentIds.has(comment.id));
+    if (newApiComments.length > 0) {
+      console.log(`Found ${newApiComments.length} new comments from API that aren't displayed yet`);
+      loadAndSyncComments(true);
+    }
 
     // Update the goldCommentIds set to match database state
-    goldCommentIds = dbCommentIds;
+    goldCommentIds = newGoldCommentIds;
     
   } catch (err) {
     console.error('Error checking for new gold comments:', err);
@@ -451,12 +482,13 @@ setInterval(() => {
   loadAndSyncComments(true);
 }, REFRESH_INTERVAL);
 
-// Set up periodic checking for new gold comments
+// Increase frequency of checking for new gold comments and metadata sync
 setInterval(checkForNewGoldComments, DB_CHECK_INTERVAL);
 
-// Subscribe to database changes
+// Subscribe to database changes to trigger immediate UI updates
 room.collection('comments').subscribe(function(comments) {
-  console.log('Database comments updated:', comments);
+  console.log('Database comments updated, checking gold status...');
+  checkForNewGoldComments();
 });
 
 // Listen for iframe resize messages
