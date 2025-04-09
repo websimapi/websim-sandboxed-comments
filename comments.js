@@ -9,49 +9,6 @@ let currentUser = null;
 const iframeMap = new Map();
 let goldCommentIds = new Set(); // Track which comments are gold
 
-// Add emoji mapping object
-const emojiMap = {
-  '+1': '👍',
-  '-1': '👎',
-  'thumbsup': '👍',
-  'thumbsdown': '👎',
-  'heart': '❤️',
-  'smile': '😊',
-  'laugh': '😄',
-  'tada': '🎉',
-  'rocket': '🚀',
-  'fire': '🔥',
-  'clap': '👏',
-  'eyes': '👀',
-  'thinking': '🤔',
-  'raised_hands': '🙌',
-  'pray': '🙏',
-  'party': '🎉',
-  'star': '⭐',
-  'sparkles': '✨',
-  'heart_eyes': '😍',
-  'sunglasses': '😎',
-  'rage': '😡',
-  'cry': '😢',
-  'scream': '😱',
-  'zzz': '💤',
-  'muscle': '💪',
-  'ok_hand': '👌',
-  'v': '✌️',
-  'point_up': '☝️',
-  'wave': '👋',
-  'smiley': '😃',
-  'joy': '😂',
-  'skull': '💀',
-  'unicorn': '🦄',
-  'rainbow': '🌈',
-  'bulb': '💡',
-  'bell': '🔔',
-  'crown': '👑',
-  'gift': '🎁',
-  'trophy': '🏆'
-};
-
 // Add emoji conversion function 
 function getEmoji(name) {
   return emojiMap[name.toLowerCase()] || name;
