@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sandboxed Comments</title>
+  <style>
+    .comment-container {
+      margin: 20px;
+      padding: 15px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+    }
+
+    .comment-iframe {
+      width: 100%;
+      border: none;
+      background: transparent;
+    }
+
+    .comment-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      margin-right: 10px;
+    }
+
+    .username {
+      font-weight: bold;
+      color: #333;
+      text-decoration: none;
+    }
+
+    .timestamp {
+      color: #666;
+      margin-left: 10px;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <div id="comments"></div>
+
+  <template id="comment-template">
+    <div class="comment-container">
+      <div class="comment-header">
+        <img class="avatar">
+        <a class="username" target="_blank"></a>
+        <span class="timestamp"></span>
+      </div>
+      <iframe sandbox="allow-scripts" class="comment-iframe" scrolling="no"></iframe>
+    </div>
+  </template>
+
+  <script>
+    async function loadComments() {
+      const projectId = (await window.websim.getCurrentProject()).id;
+      const response = await fetch(`/api/v1/projects/${projectId}/comments`);
+      const data = await response.json();
+      
+      const commentsDiv = document.getElementById('comments');
+      const template = document.getElementById('comment-template');
+
+      data.comments.data.forEach(({comment}) => {
+        const container = template.content.cloneNode(true);
+        
+        // Set up header info
+        const avatar = container.querySelector('.avatar');
+        const username = container.querySelector('.username');
+        const timestamp = container.querySelector('.timestamp');
+        const iframe = container.querySelector('iframe');
+
+        avatar.src = `https://images.websim.ai/avatar/${comment.author.username}`;
+        username.href = `https://websim.ai/@${comment.author.username}`;
+        username.textContent = '@' + comment.author.username;
+        timestamp.textContent = new Date(comment.created_at).toLocaleDateString();
+
+        // Create sandboxed comment content
+        const html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <style>
+              body { 
+                margin: 0;
+                font-family: system-ui, sans-serif;
+                line-height: 1.5;
+              }
+              p { margin: 0 0 1em; }
+              a { color: #0066cc; }
+              img { max-width: 100%; height: auto; }
+            </style>
+          </head>
+          <body>
+            ${comment.raw_content || ''}
+            <script>
+              // Adjust iframe height to content
+              window.addEventListener('load', () => {
+                const height = document.body.scrollHeight;
+                window.parent.postMessage({type: 'resize', height}, '*');
+              });
+            </script>
+          <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+          </html>
+        `;
+
+        const blob = new Blob([html], {type: 'text/html'});
+        iframe.src = URL.createObjectURL(blob);
+
+        commentsDiv.appendChild(container);
+      });
+
+      // Listen for iframe resize messages
+      window.addEventListener('message', (e) => {
+        if (e.data.type === 'resize') {
+          const iframes = document.querySelectorAll('.comment-iframe');
+          for (const iframe of iframes) {
+            if (iframe.src === e.source.location.href) {
+              iframe.style.height = e.data.height + 'px';
+            }
+          }
+        }
+      });
+    }
+
+    loadComments();
+  </script>
+</body>
+</html>
+
