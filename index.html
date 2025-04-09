@@ -10,6 +10,16 @@
       padding: 15px;
       border: 1px solid #ccc;
       border-radius: 8px;
+      transition: all 0.5s ease-out;
+      transform-origin: top;
+      opacity: 1;
+      max-height: 2000px; /* Large enough to contain comment */
+    }
+
+    .comment-container.new-comment {
+      opacity: 0;
+      max-height: 0;
+      transform: translateY(-20px);
     }
 
     .comment-iframe {
@@ -76,6 +86,11 @@
       font-size: 0.8em;
       margin-left: 10px;
     }
+
+    /* Ensure smooth height transitions */
+    #comments {
+      transition: all 0.5s ease-out;
+    }
   </style>
 </head>
 <body>
@@ -123,7 +138,7 @@
       `).join('');
     }
 
-    async function renderComment(comment, template, commentsDiv, index, iframeMap) {
+    async function renderComment(comment, template, commentsDiv, index, iframeMap, checkNewOnly) {
       const container = template.content.cloneNode(true);
       
       const avatar = container.querySelector('.avatar');
@@ -193,7 +208,24 @@
       const blobUrl = URL.createObjectURL(blob);
       iframe.src = blobUrl;
       
-      return {container, blobUrl};
+      // Add new-comment class for animation
+      container.querySelector('.comment-container').classList.add('new-comment');
+      
+      if (checkNewOnly) {
+        commentsDiv.insertBefore(container, commentsDiv.firstChild);
+        
+        // Trigger animation after brief delay to ensure DOM is ready
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            container.querySelector('.comment-container').classList.remove('new-comment');
+          }, 50);
+        });
+      } else {
+        commentsDiv.appendChild(container);
+      }
+
+      // Clean up blob URL when unloading
+      return blobUrl;
     }
 
     async function loadComments(checkNewOnly = false) {
@@ -229,14 +261,9 @@
           continue;
         }
 
-        const {container, blobUrl} = await renderComment(comment, template, commentsDiv, index, iframeMap);
-        blobUrls.push(blobUrl);
+        const blobUrl = await renderComment(comment, template, commentsDiv, index, iframeMap, checkNewOnly);
         
-        if (checkNewOnly) {
-          commentsDiv.insertBefore(container, commentsDiv.firstChild);
-        } else {
-          commentsDiv.appendChild(container);
-        }
+        blobUrls.push(blobUrl);
       }
 
       lastCommentTimestamp = latestTimestamp;
