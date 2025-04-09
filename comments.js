@@ -197,15 +197,38 @@ async function syncCommentToDatabase(comment) {
     const existingComments = await room.collection('comments').getList();
     
     // Check for duplicates using multiple criteria to be extra safe
-    const isDuplicate = existingComments.some(dbComment => {
+    const duplicates = existingComments.filter(dbComment => {
       return (
-        dbComment.comment_id === comment.id || // Check by comment ID
+        (dbComment.comment_id === comment.id) || // Check by comment ID
         (dbComment.created_at === comment.created_at && // Check by timestamp AND content
          dbComment.content === comment.raw_content)
       );
     });
 
-    if (isDuplicate) {
+    // If we found any duplicates, delete all but one
+    if (duplicates.length > 0) {
+      console.log(`Found ${duplicates.length} duplicate entries for comment ID: ${comment.id}`);
+      
+      // Keep the oldest entry (first created)
+      const sortedDuplicates = [...duplicates].sort((a, b) => 
+        new Date(a.created_at) - new Date(b.created_at)
+      );
+      
+      // Keep first entry, delete the rest
+      for (let i = 1; i < sortedDuplicates.length; i++) {
+        try {
+          // Only delete if it's the current user's comment (permission check)
+          const user = await getCurrentUser();
+          if (sortedDuplicates[i].username === user.username) {
+            console.log(`Deleting duplicate entry: ${sortedDuplicates[i].id}`);
+            await room.collection('comments').delete(sortedDuplicates[i].id);
+          }
+        } catch (deleteErr) {
+          console.error('Error deleting duplicate:', deleteErr);
+        }
+      }
+      
+      // Since we already have this comment in the database, don't add it again
       console.log('Comment already exists in database, skipping sync:', comment.id);
       return false;
     }
@@ -243,13 +266,21 @@ async function loadAndSyncComments(checkNewOnly = false) {
 
     const user = await getCurrentUser();
     
-    // First get ALL comments from database
-    const dbComments = await room.collection('comments').getList();
-    const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
-    
-    // Then get comments from API
+    // Get all comments from API
     const response = await fetch(`/api/v1/projects/${projectId}/comments`);
     const data = await response.json();
+    
+    if (data.comments.data.length === 0) return;
+
+    // Get ALL comments from database first 
+    const dbComments = await room.collection('comments').getList();
+    const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
+
+    const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
+    
+    if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
+      return;
+    }
     
     if (!checkNewOnly) {
       document.getElementById('comments').innerHTML = '';
@@ -259,7 +290,7 @@ async function loadAndSyncComments(checkNewOnly = false) {
     const template = document.getElementById('comment-template');
     const blobUrls = [];
 
-    // Process comments from API in reverse order when checking new only
+    // Process comments in reverse order when checking new only
     let commentsToProcess = checkNewOnly ? 
       data.comments.data.filter(({comment}) => 
         !lastCommentTimestamp || new Date(comment.created_at) > lastCommentTimestamp
@@ -276,17 +307,9 @@ async function loadAndSyncComments(checkNewOnly = false) {
       return b.comment.pinned ? 1 : -1;
     });
 
-    if (data.comments.data.length > 0) {
-      const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
-      if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
-        return;
-      }
-      lastCommentTimestamp = latestTimestamp;
-    }
-
     // Render comments
     for (const [index, {comment}] of commentsToProcess.entries()) {
-      // Check if comment is in database
+      // Add gold outline check before rendering
       const isInDatabase = existingCommentIds.has(comment.id);
       const {container, blobUrl} = await renderComment(
         comment, 
@@ -300,12 +323,7 @@ async function loadAndSyncComments(checkNewOnly = false) {
       
       // After rendering, if it's the current user's comment and not already in database, sync it
       if (comment.author.username === user.username && !isInDatabase) {
-        const synced = await syncCommentToDatabase(comment);
-        if (synced) {
-          // Update UI to show gold outline
-          const commentElement = container.querySelector('.comment-container');
-          commentElement.classList.add('in-database');
-        }
+        await syncCommentToDatabase(comment);
       }
       
       if (checkNewOnly) {
@@ -336,6 +354,8 @@ async function loadAndSyncComments(checkNewOnly = false) {
       }
     }
 
+    lastCommentTimestamp = latestTimestamp;
+
     // Clean up blob URLs
     window.addEventListener('unload', () => {
       blobUrls.forEach(URL.revokeObjectURL);
@@ -350,7 +370,52 @@ async function checkForNewGoldComments() {
   try {
     // Get latest database comments
     const dbComments = await room.collection('comments').getList();
-    const newGoldCommentIds = new Set(dbComments.map(c => c.comment_id));
+    
+    // Check for and clean up any duplicates in the database
+    const commentIdMap = new Map();
+    const duplicatesToRemove = [];
+    
+    // Find duplicates
+    dbComments.forEach(comment => {
+      if (!commentIdMap.has(comment.comment_id)) {
+        commentIdMap.set(comment.comment_id, [comment]);
+      } else {
+        commentIdMap.get(comment.comment_id).push(comment);
+      }
+    });
+    
+    // Process duplicates: keep oldest one, mark others for deletion
+    for (const [commentId, entries] of commentIdMap.entries()) {
+      if (entries.length > 1) {
+        console.log(`Found ${entries.length} duplicates for comment ID: ${commentId}`);
+        // Sort by created_at to keep the oldest one
+        const sorted = [...entries].sort((a, b) => 
+          new Date(a.created_at) - new Date(b.created_at)
+        );
+        
+        // Keep first entry, mark others for deletion
+        for (let i = 1; i < sorted.length; i++) {
+          duplicatesToRemove.push(sorted[i]);
+        }
+      }
+    }
+    
+    // Delete duplicates if user has permission
+    const user = await getCurrentUser();
+    for (const duplicate of duplicatesToRemove) {
+      if (duplicate.username === user.username) {
+        try {
+          console.log(`Auto-deleting duplicate entry: ${duplicate.id}`);
+          await room.collection('comments').delete(duplicate.id);
+        } catch (err) {
+          console.error('Error deleting duplicate during check:', err);
+        }
+      }
+    }
+    
+    // Update with fresh comments list after cleaning up
+    const updatedDbComments = await room.collection('comments').getList();
+    const newGoldCommentIds = new Set(updatedDbComments.map(c => c.comment_id));
 
     // Get all comment containers from the page
     const commentContainers = document.querySelectorAll('.comment-container');
@@ -390,7 +455,6 @@ setInterval(checkForNewGoldComments, DB_CHECK_INTERVAL);
 // Subscribe to database changes
 room.collection('comments').subscribe(function(comments) {
   console.log('Database comments updated:', comments);
-  checkForNewGoldComments(); // Update UI immediately when database changes
 });
 
 // Listen for iframe resize messages
