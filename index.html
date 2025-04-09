@@ -211,7 +211,7 @@
 
       iframeMap.set(index, iframe);
 
-      // Set up header info from database record
+      // Set up header info
       avatar.src = `https://images.websim.ai/avatar/${commentData.username}`;
       username.href = `https://websim.ai/@${commentData.username}`;
       username.textContent = '@' + commentData.username;
@@ -225,7 +225,7 @@
         }
       }
 
-      // Show reactions from parsed JSON string
+      // Show reactions
       const reactions = JSON.parse(commentData.reactions || '[]');
       renderReactions(reactions, reactionList);
 
@@ -306,22 +306,36 @@
       }
     }
 
-    async function loadAndRenderComments(checkNewOnly = false) {
+    async function loadAndSyncComments(checkNewOnly = false) {
       if (!projectId) {
         projectId = (await window.websim.getCurrentProject()).id;
       }
 
-      // Get comments from database instead of API
+      const user = await getCurrentUser();
+      
+      // First fetch from API and sync to ensure database is up to date
+      const response = await fetch(`/api/v1/projects/${projectId}/comments`);
+      const data = await response.json();
+      
+      // Sync any missing comments
+      if (data.comments.data.length > 0) {
+        const syncPromises = data.comments.data.map(async ({comment}) => {
+          if (comment.author.username === user.username) {
+            await syncCommentToDatabase(comment);
+          }
+        });
+        await Promise.all(syncPromises);
+      }
+
+      // Now render from database
       const dbComments = await room.collection('comments')
         .filter({ project_id: projectId })
         .getList();
-
-      // Sort by created_at descending (newest first)
-      dbComments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       
-      if (dbComments.length === 0) return;
+      // Sort comments by created_at in descending order
+      dbComments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-      const latestTimestamp = new Date(dbComments[0].created_at);
+      const latestTimestamp = dbComments.length > 0 ? new Date(dbComments[0].created_at) : null;
       
       if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
         return;
@@ -336,7 +350,7 @@
       const iframeMap = new Map();
       const blobUrls = [];
 
-      // Render comments from database
+      // Render new comments from database
       for (const [index, comment] of dbComments.entries()) {
         if (checkNewOnly && lastCommentTimestamp && new Date(comment.created_at) <= lastCommentTimestamp) {
           continue;
@@ -378,41 +392,18 @@
       });
     }
 
-    async function initializeAndSync() {
-      // Initial API fetch to sync new comments to database
-      if (!projectId) {
-        projectId = (await window.websim.getCurrentProject()).id;
-      }
-
-      const response = await fetch(`/api/v1/projects/${projectId}/comments`);
-      const data = await response.json();
-      
-      const user = await getCurrentUser();
-      
-      // Sync user's comments to database
-      for (const {comment} of data.comments.data) {
-        if (comment.author.username === user.username) {
-          await syncCommentToDatabase(comment);
-        }
-      }
-
-      // Initial render from database
-      await loadAndRenderComments();
-    }
-
-    // Initial load and sync
-    initializeAndSync();
+    // Initial load
+    loadAndSyncComments();
 
     // Set up periodic checking for new comments
-    setInterval(async () => {
-      await initializeAndSync(); // Sync first
-      await loadAndRenderComments(true); // Then render any new ones
+    setInterval(() => {
+      loadAndSyncComments(true);
     }, REFRESH_INTERVAL);
 
-    // Subscribe to database changes
-    room.collection('comments').subscribe(async function(comments) {
+    // Subscribe to database changes and reload comments when database updates
+    room.collection('comments').subscribe(function(comments) {
       console.log('Database comments updated:', comments);
-      await loadAndRenderComments(); // Re-render when database changes
+      loadAndSyncComments(true);
     });
   </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
