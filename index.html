@@ -273,18 +273,29 @@
 
     async function syncCommentToDatabase(comment) {
       try {
-        // Create a record in our database with comment data
-        await room.collection('comments').create({
-          comment_id: comment.id,
-          project_id: comment.project_id,
-          content: comment.raw_content,
-          parent_comment_id: comment.parent_comment_id,
-          pinned: comment.pinned,
-          pinned_by: comment.pinned_by?.username,
-          reactions: JSON.stringify(comment.reactions),
-          reply_count: comment.reply_count,
-          created_at: comment.created_at
-        });
+        // Check if comment already exists by filtering on unique identifiers
+        const existingComments = room.collection('comments')
+          .filter({
+            comment_id: comment.id,
+            project_id: comment.project_id,
+            created_at: comment.created_at
+          })
+          .getList();
+
+        // Only create if no matching comment exists
+        if (existingComments.length === 0) {
+          await room.collection('comments').create({
+            comment_id: comment.id,
+            project_id: comment.project_id,
+            content: comment.raw_content,
+            parent_comment_id: comment.parent_comment_id,
+            pinned: comment.pinned,
+            pinned_by: comment.pinned_by?.username,
+            reactions: JSON.stringify(comment.reactions),
+            reply_count: comment.reply_count,
+            created_at: comment.created_at
+          });
+        }
       } catch (err) {
         console.error('Error syncing comment to database:', err);
       }
