@@ -273,35 +273,31 @@
 
     async function syncCommentToDatabase(comment) {
       try {
-        // First check if comment already exists
-        const existingComment = room.collection('comments_v2')
-          .filter({ 
-            comment_id: comment.id,
-            project_id: comment.project_id 
-          })
+        // Search for existing comment with this ID
+        const existingComments = room.collection('comments')
+          .filter({ comment_id: comment.id })
           .getList();
 
-        // If comment doesn't exist yet, create it
-        if (existingComment.length === 0) {
-          await room.collection('comments_v2').create({ 
-            comment_id: comment.id, 
-            project_id: comment.project_id,
-            content: comment.raw_content,
-            parent_comment_id: comment.parent_comment_id,
-            pinned: comment.pinned,
-            pinned_by: comment.pinned_by?.username,
-            reactions: JSON.stringify(comment.reactions),
-            reply_count: comment.reply_count,
-            created_at: comment.created_at
-          });
+        // If we find a matching comment_id, reject the insert
+        if (existingComments.length > 0) {
+          console.log('Comment already exists in database, skipping:', comment.id);
+          return;
         }
+
+        // Create a record in our database with comment data
+        await room.collection('comments_v2').create({
+          comment_id: comment.id,
+          project_id: comment.project_id,
+          content: comment.raw_content,
+          parent_comment_id: comment.parent_comment_id,
+          pinned: comment.pinned,
+          pinned_by: comment.pinned_by?.username,
+          reactions: JSON.stringify(comment.reactions),
+          reply_count: comment.reply_count,
+          created_at: comment.created_at
+        });
       } catch (err) {
-        // Specific error handling for duplicate entries
-        if (err.message?.includes('unique constraint')) {
-          console.log('Comment already exists in database:', comment.id);
-        } else {
-          console.error('Error syncing comment to database:', err);
-        }
+        console.error('Error syncing comment to database:', err);
       }
     }
 
@@ -318,20 +314,18 @@
       
       if (data.comments.data.length === 0) return;
 
-      // Get all comments from our database for this project using the new collection
+      // Get all comments from our database for this project
       const dbComments = room.collection('comments_v2')
         .filter({ project_id: projectId })
         .getList();
 
-      // Create a map for faster lookups
-      const existingComments = new Map(
-        dbComments.map(c => [`${c.comment_id}-${c.project_id}`, c])
-      );
+      // Create a map of existing comment IDs in our database
+      const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
 
-      // Check each API comment and sync if needed 
+      // Check each API comment and sync if needed
       for (const {comment} of data.comments.data) {
-        const key = `${comment.id}-${comment.project_id}`;
-        if (!existingComments.has(key) && comment.author.username === user.username) {
+        // Only sync comments by current user that aren't already in DB
+        if (!existingCommentIds.has(comment.id) && comment.author.username === user.username) {
           await syncCommentToDatabase(comment);
         }
       }
@@ -402,7 +396,7 @@
     }, REFRESH_INTERVAL);
 
     // Subscribe to database changes
-    room.collection('comments_v2').subscribe(function(comments) {
+    room.collection('comments').subscribe(function(comments) {
       console.log('Database comments updated:', comments);
     });
   </script>
