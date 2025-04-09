@@ -1,0 +1,46 @@
+const emojiMap = {
+  '+1': '👍',
+  '-1': '👎',
+  'thumbsup': '👍',
+  'thumbsdown': '👎',
+  'heart': '❤️',
+  'smile': '😊',
+  'laugh': '😄',
+  'tada': '🎉',
+  'rocket': '🚀',
+  'fire': '🔥',
+  'clap': '👏',
+  'eyes': '👀',
+  'thinking': '🤔',
+  'raised_hands': '🙌',
+  'pray': '🙏',
+  'party': '🎉',
+  'star': '⭐',
+  'sparkles': '✨',
+  'heart_eyes': '😍',
+  'sunglasses': '😎',
+  'rage': '😡',
+  'cry': '😢',
+  'scream': '😱',
+  'zzz': '💤',
+  'muscle': '💪',
+  'ok_hand': '👌',
+  'v': '✌️',
+  'point_up': '☝️',
+  'wave': '👋',
+  'smiley': '😃',
+  'joy': '😂',
+  'skull': '💀',
+  'unicorn': '🦄',
+  'rainbow': '🌈',
+  'bulb': '💡',
+  'bell': '🔔',
+  'crown': '👑',
+  'gift': '🎁',
+  'trophy': '🏆'
+};
+
+function getEmoji(name) {
+  return emojiMap[name.toLowerCase()] || name;
+}
+
