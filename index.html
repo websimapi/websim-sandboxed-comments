@@ -364,11 +364,21 @@
         const blobUrls = [];
 
         // Process comments in reverse order when checking new only
-        const commentsToProcess = checkNewOnly ? 
+        let commentsToProcess = checkNewOnly ? 
           data.comments.data.filter(({comment}) => 
             !lastCommentTimestamp || new Date(comment.created_at) > lastCommentTimestamp
           ).reverse() : 
           data.comments.data;
+
+        // Sort comments - pinned first, then by date
+        commentsToProcess = commentsToProcess.sort((a, b) => {
+          // If both are pinned or both not pinned, sort by date
+          if (a.comment.pinned === b.comment.pinned) {
+            return new Date(b.comment.created_at) - new Date(a.comment.created_at);
+          }
+          // If one is pinned, it should come first
+          return b.comment.pinned ? 1 : -1;
+        });
 
         // Render comments
         for (const [index, {comment}] of commentsToProcess.entries()) {
@@ -392,7 +402,20 @@
           if (checkNewOnly) {
             const firstChild = container.firstElementChild;
             firstChild.classList.add('new-comment');
-            commentsDiv.insertBefore(container, commentsDiv.firstChild);
+            // If pinned, insert at top, otherwise at normal position
+            if (comment.pinned) {
+              // Find the first non-pinned comment to insert before
+              const firstNonPinned = Array.from(commentsDiv.children).find(
+                child => !child.querySelector('.pinned-badge').style.display === 'inline'
+              );
+              if (firstNonPinned) {
+                commentsDiv.insertBefore(container, firstNonPinned);
+              } else {
+                commentsDiv.appendChild(container);
+              }
+            } else {
+              commentsDiv.appendChild(container);
+            }
             
             requestAnimationFrame(() => {
               requestAnimationFrame(() => {
