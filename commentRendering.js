@@ -171,8 +171,25 @@ async function loadReplies(commentId, repliesContainer) {
     const dbComments = await room.collection('comments').getList();
     const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
 
-    // Render each reply
-    for (const [index, reply] of data.comments.data.entries()) {
+    // Detect and remove duplicates in replies
+    const uniqueReplies = [];
+    const seenReplies = new Set();
+    
+    for (const item of data.comments.data) {
+      const reply = item.comment;
+      // Create a unique key for each reply based on content, user, and date
+      const replyKey = `${reply.raw_content}_${reply.author.username}_${reply.created_at}`;
+      
+      if (!seenReplies.has(replyKey)) {
+        seenReplies.add(replyKey);
+        uniqueReplies.push(item);
+      } else {
+        console.log('Detected duplicate reply, skipping:', reply.id);
+      }
+    }
+
+    // Render each unique reply
+    for (const [index, reply] of uniqueReplies.entries()) {
       const isInDatabase = existingCommentIds.has(reply.comment.id);
       const {container, blobUrl} = await renderComment(
         reply.comment,

@@ -48,8 +48,34 @@ async function loadAndSyncComments(checkNewOnly = false) {
       return b.comment.pinned ? 1 : -1;
     });
 
+    // Detect and remove duplicates based on content, user, and date
+    const uniqueComments = [];
+    const seenComments = new Set();
+    
+    for (const item of commentsToProcess) {
+      const comment = item.comment;
+      // Create a unique key for each comment based on content, user, and date
+      const commentKey = `${comment.raw_content}_${comment.author.username}_${comment.created_at}`;
+      
+      if (!seenComments.has(commentKey)) {
+        seenComments.add(commentKey);
+        uniqueComments.push(item);
+      } else {
+        console.log('Detected duplicate comment, skipping:', comment.id);
+      }
+    }
+    
+    // Replace with deduplicated list
+    commentsToProcess = uniqueComments;
+
     // Render comments
     for (const [index, {comment}] of commentsToProcess.entries()) {
+      // Don't render if there's already a comment with this ID on the page
+      if (document.querySelector(`.comment-container[data-comment-id="${comment.id}"]`)) {
+        console.log('Comment already rendered, skipping:', comment.id);
+        continue;
+      }
+      
       // Add gold outline check before rendering
       const isInDatabase = dbCommentMap.has(comment.id);
       const {container, blobUrl} = await renderComment(

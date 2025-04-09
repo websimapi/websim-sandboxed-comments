@@ -46,7 +46,8 @@ async function syncCommentToDatabase(comment, existingDbComment = null) {
           reply_count: comment.reply_count,
           created_at: comment.created_at,
           last_checked: new Date().toISOString(), // Add timestamp for consensus
-          check_count: (existingDbComment.check_count || 0) + 1 // Increment check count
+          check_count: (existingDbComment.check_count || 0) + 1, // Increment check count
+          username: comment.author.username // Store username for duplicate detection
         });
         console.log('Updated existing comment in database:', comment.id);
         return true;
@@ -57,12 +58,13 @@ async function syncCommentToDatabase(comment, existingDbComment = null) {
     // Otherwise, check if this is a duplicate before creating
     const existingComments = await room.collection('comments').getList();
     
-    // Check for duplicates using multiple criteria
+    // Enhanced duplicate detection including username
     const isDuplicate = existingComments.some(dbComment => {
       return (
         dbComment.comment_id === comment.id || // Check by comment ID
-        (dbComment.created_at === comment.created_at && // Check by timestamp AND content
-         dbComment.content === comment.raw_content)
+        (dbComment.created_at === comment.created_at && 
+         dbComment.content === comment.raw_content &&
+         dbComment.username === comment.author.username) // Check by timestamp, content AND username
       );
     });
 
@@ -83,7 +85,8 @@ async function syncCommentToDatabase(comment, existingDbComment = null) {
       reply_count: comment.reply_count,
       created_at: comment.created_at,
       last_checked: new Date().toISOString(), // Add timestamp for consensus
-      check_count: 1 // Initialize check count
+      check_count: 1, // Initialize check count
+      username: comment.author.username // Store username for duplicate detection
     });
     
     console.log('Successfully synced new comment to database:', comment.id);
@@ -150,8 +153,6 @@ window.addEventListener('message', (e) => {
   }
 })();
 
-// Note: The following functions were not provided in the plan, 
-// but are necessary for the code to work. They have been added based on the original code.
 async function loadAndSyncComments() {
   try {
     const user = await getCurrentUser();
@@ -300,16 +301,11 @@ function renderReactions(reactions, container) {
 }
 
 function syncWithConsensus() {
-  // This function is not defined in the plan, 
-  // so it's added based on the original code.
   loadAndSyncComments(true);
 }
 
 function handleDatabaseUpdates(comments) {
-  // This function is not defined in the plan, 
-  // so it's added based on the original code.
   console.log('Database comments updated:', comments);
-  // When database changes, run gold comment check immediately
   checkForNewGoldComments();
 }
 
