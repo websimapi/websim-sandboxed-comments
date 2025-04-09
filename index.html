@@ -273,19 +273,21 @@
 
     async function syncCommentToDatabase(comment) {
       try {
-        // Search for existing comment with this ID
-        const existingComments = room.collection('comments')
-          .filter({ comment_id: comment.id })
-          .getList();
+        // First get ALL existing comments from database
+        const existingComments = await room.collection('comments').getList();
+        
+        // Check if this comment already exists
+        const commentExists = existingComments.some(dbComment => 
+          dbComment.comment_id === comment.id
+        );
 
-        // If we find a matching comment_id, reject the insert
-        if (existingComments.length > 0) {
-          console.log('Comment already exists in database, skipping:', comment.id);
+        if (commentExists) {
+          console.log('Comment already exists in database, skipping sync:', comment.id);
           return;
         }
 
         // Create a record in our database with comment data
-        await room.collection('comments_v2').create({
+        await room.collection('comments').create({
           comment_id: comment.id,
           project_id: comment.project_id,
           content: comment.raw_content,
@@ -296,6 +298,8 @@
           reply_count: comment.reply_count,
           created_at: comment.created_at
         });
+        
+        console.log('Successfully synced comment to database:', comment.id);
       } catch (err) {
         console.error('Error syncing comment to database:', err);
       }
@@ -314,21 +318,23 @@
       
       if (data.comments.data.length === 0) return;
 
-      // Get all comments from our database for this project
-      const dbComments = room.collection('comments_v2')
-        .filter({ project_id: projectId })
-        .getList();
-
-      // Create a map of existing comment IDs in our database
-      const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
+      // Get ALL comments from our database
+      const dbComments = await room.collection('comments').getList();
+      
+      // Create a map for faster lookups
+      const existingCommentMap = new Map(
+        dbComments.map(comment => [comment.comment_id, comment])
+      );
 
       // Check each API comment and sync if needed
-      for (const {comment} of data.comments.data) {
-        // Only sync comments by current user that aren't already in DB
-        if (!existingCommentIds.has(comment.id) && comment.author.username === user.username) {
+      const syncPromises = data.comments.data.map(async ({comment}) => {
+        if (!existingCommentMap.has(comment.id) && comment.author.username === user.username) {
           await syncCommentToDatabase(comment);
         }
-      }
+      });
+
+      // Wait for all sync operations to complete
+      await Promise.all(syncPromises);
 
       const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
       
