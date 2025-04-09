@@ -289,19 +289,25 @@
 
     async function syncCommentToDatabase(comment) {
       try {
-        // First check if this comment is already in database (marked with gold)
+        // Get ALL existing comments first and do a thorough duplicate check
         const existingComments = await room.collection('comments').getList();
-        const commentExists = existingComments.some(dbComment => 
-          dbComment.comment_id === comment.id
-        );
+        
+        // Check for duplicates using multiple criteria to be extra safe
+        const isDuplicate = existingComments.some(dbComment => {
+          return (
+            dbComment.comment_id === comment.id || // Check by comment ID
+            (dbComment.created_at === comment.created_at && // Check by timestamp AND content
+             dbComment.content === comment.raw_content)
+          );
+        });
 
-        if (commentExists) {
-          console.log('Comment already exists in database (marked gold), skipping sync:', comment.id);
+        if (isDuplicate) {
+          console.log('Comment already exists in database, skipping sync:', comment.id);
           return false;
         }
 
-        // Only if comment doesn't exist, create the record
-        await room.collection('comments').create({
+        // Only if we're absolutely sure it's not a duplicate, create the record
+        const newRecord = await room.collection('comments').create({
           comment_id: comment.id,
           project_id: comment.project_id,
           content: comment.raw_content,
@@ -314,6 +320,10 @@
         });
         
         console.log('Successfully synced new comment to database:', comment.id);
+        
+        // Update goldCommentIds immediately after successful insert
+        goldCommentIds.add(comment.id);
+        
         return true;
       } catch (err) {
         console.error('Error syncing comment to database:', err);
@@ -322,73 +332,88 @@
     }
 
     async function loadAndSyncComments(checkNewOnly = false) {
-      if (!projectId) {
-        projectId = (await window.websim.getCurrentProject()).id;
-      }
-
-      const user = await getCurrentUser();
-      
-      // Get all comments from API
-      const response = await fetch(`/api/v1/projects/${projectId}/comments`);
-      const data = await response.json();
-      
-      if (data.comments.data.length === 0) return;
-
-      // Get ALL comments from database first for gold outline check
-      const dbComments = await room.collection('comments').getList();
-      const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
-
-      const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
-      
-      if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
-        return;
-      }
-      
-      if (!checkNewOnly) {
-        document.getElementById('comments').innerHTML = '';
-      }
-
-      const commentsDiv = document.getElementById('comments');
-      const template = document.getElementById('comment-template');
-      const blobUrls = [];
-
-      // Render new comments
-      for (const [index, {comment}] of data.comments.data.entries()) {
-        if (checkNewOnly && lastCommentTimestamp && new Date(comment.created_at) <= lastCommentTimestamp) {
-          continue;
+      try {
+        if (!projectId) {
+          projectId = (await window.websim.getCurrentProject()).id;
         }
 
-        // Add gold outline check before rendering
-        const isInDatabase = existingCommentIds.has(comment.id);
-        const {container, blobUrl} = await renderComment(comment, template, commentsDiv, index, iframeMap, isInDatabase);
-        blobUrls.push(blobUrl);
+        const user = await getCurrentUser();
         
-        // After rendering, if it's the current user's comment and not already in database, sync it
-        if (comment.author.username === user.username && !isInDatabase) {
-          await syncCommentToDatabase(comment);
+        // Get all comments from API
+        const response = await fetch(`/api/v1/projects/${projectId}/comments`);
+        const data = await response.json();
+        
+        if (data.comments.data.length === 0) return;
+
+        // Get ALL comments from database first 
+        const dbComments = await room.collection('comments').getList();
+        const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
+
+        const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
+        
+        if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
+          return;
         }
         
-        if (checkNewOnly) {
-          const firstChild = container.firstElementChild;
-          firstChild.classList.add('new-comment');
-          commentsDiv.insertBefore(container, commentsDiv.firstChild);
+        if (!checkNewOnly) {
+          document.getElementById('comments').innerHTML = '';
+        }
+
+        const commentsDiv = document.getElementById('comments');
+        const template = document.getElementById('comment-template');
+        const blobUrls = [];
+
+        // Process comments in reverse order when checking new only
+        const commentsToProcess = checkNewOnly ? 
+          data.comments.data.filter(({comment}) => 
+            !lastCommentTimestamp || new Date(comment.created_at) > lastCommentTimestamp
+          ).reverse() : 
+          data.comments.data;
+
+        // Render comments
+        for (const [index, {comment}] of commentsToProcess.entries()) {
+          // Add gold outline check before rendering
+          const isInDatabase = existingCommentIds.has(comment.id);
+          const {container, blobUrl} = await renderComment(
+            comment, 
+            template, 
+            commentsDiv, 
+            index, 
+            iframeMap, 
+            isInDatabase
+          );
+          blobUrls.push(blobUrl);
           
-          requestAnimationFrame(() => {
+          // After rendering, if it's the current user's comment and not already in database, sync it
+          if (comment.author.username === user.username && !isInDatabase) {
+            await syncCommentToDatabase(comment);
+          }
+          
+          if (checkNewOnly) {
+            const firstChild = container.firstElementChild;
+            firstChild.classList.add('new-comment');
+            commentsDiv.insertBefore(container, commentsDiv.firstChild);
+            
             requestAnimationFrame(() => {
-              firstChild.classList.remove('new-comment');
+              requestAnimationFrame(() => {
+                firstChild.classList.remove('new-comment');
+              });
             });
-          });
-        } else {
-          commentsDiv.appendChild(container);
+          } else {
+            commentsDiv.appendChild(container);
+          }
         }
+
+        lastCommentTimestamp = latestTimestamp;
+
+        // Clean up blob URLs
+        window.addEventListener('unload', () => {
+          blobUrls.forEach(URL.revokeObjectURL);
+        }, { once: true });
+        
+      } catch (err) {
+        console.error('Error in loadAndSyncComments:', err);
       }
-
-      lastCommentTimestamp = latestTimestamp;
-
-      // Clean up blob URLs when navigating away
-      window.addEventListener('unload', () => {
-        blobUrls.forEach(URL.revokeObjectURL);
-      }, { once: true });
     }
 
     async function checkForNewGoldComments() {
