@@ -122,6 +122,54 @@
     let projectId = null;
     let currentUser = null;
 
+    // Add emoji mapping object
+    const emojiMap = {
+      '+1': '👍',
+      '-1': '👎',
+      'thumbsup': '👍',
+      'thumbsdown': '👎',
+      'heart': '❤️',
+      'smile': '😊',
+      'laugh': '😄',
+      'tada': '🎉',
+      'rocket': '🚀',
+      'fire': '🔥',
+      'clap': '👏',
+      'eyes': '👀',
+      'thinking': '🤔',
+      'raised_hands': '🙌',
+      'pray': '🙏',
+      'party': '🎉',
+      'star': '⭐',
+      'sparkles': '✨',
+      'heart_eyes': '😍',
+      'sunglasses': '😎',
+      'rage': '😡',
+      'cry': '😢',
+      'scream': '😱',
+      'zzz': '💤',
+      'muscle': '💪',
+      'ok_hand': '👌',
+      'v': '✌️',
+      'point_up': '☝️',
+      'wave': '👋',
+      'smiley': '😃',
+      'joy': '😂',
+      'skull': '💀',
+      'unicorn': '🦄',
+      'rainbow': '🌈',
+      'bulb': '💡',
+      'bell': '🔔',
+      'crown': '👑',
+      'gift': '🎁',
+      'trophy': '🏆'
+    };
+
+    // Add emoji conversion function 
+    function getEmoji(name) {
+      return emojiMap[name.toLowerCase()] || name;
+    }
+
     async function getCurrentUser() {
       if (!currentUser) {
         currentUser = await window.websim.getUser();
@@ -145,7 +193,7 @@
     function renderReactions(reactions, container) {
       container.innerHTML = reactions.map(reaction => `
         <span class="reaction">
-          ${reaction.emoji.name} ${reaction.count}
+          ${getEmoji(reaction.emoji.name)} ${reaction.count}
         </span>
       `).join('');
     }
