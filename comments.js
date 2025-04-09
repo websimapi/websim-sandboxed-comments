@@ -1,8 +1,8 @@
 // Initialize WebsimSocket for database access
 const room = new WebsimSocket();
     
-const REFRESH_INTERVAL = 30000; // Check for new comments every 30 seconds
-const DB_CHECK_INTERVAL = 5000; // Check database for new gold comments every 5 seconds (reduced from 10 sec)
+const REFRESH_INTERVAL = 7000; // Check for new comments every 7 seconds
+const DB_CHECK_INTERVAL = 5000; // Check database for new gold comments every 5 seconds
 let lastCommentTimestamp = null;
 let projectId = null;
 let currentUser = null;
