@@ -92,6 +92,12 @@
     #comments {
       position: relative;
     }
+
+    /* Add new style for database-synced comments */
+    .comment-container.in-database {
+      border: 2px solid gold;
+      box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+    }
   </style>
 </head>
 <body>
@@ -191,10 +197,7 @@
     }
 
     function renderReactions(reactions, container) {
-      // Parse reactions if they're stored as a string
-      const reactionData = typeof reactions === 'string' ? JSON.parse(reactions) : reactions;
-      
-      container.innerHTML = reactionData.map(reaction => `
+      container.innerHTML = reactions.map(reaction => `
         <span class="reaction">
           ${getEmoji(reaction.emoji.name)} ${reaction.count}
         </span>
@@ -203,6 +206,15 @@
 
     async function renderComment(comment, template, commentsDiv, index, iframeMap) {
       const container = template.content.cloneNode(true);
+      
+      // Get database comments to check if this comment exists
+      const dbComments = await room.collection('comments').getList();
+      const isInDatabase = dbComments.some(dbComment => dbComment.comment_id === comment.id);
+      
+      const commentContainer = container.querySelector('.comment-container');
+      if (isInDatabase) {
+        commentContainer.classList.add('in-database');
+      }
       
       const avatar = container.querySelector('.avatar');
       const username = container.querySelector('.username');
@@ -215,16 +227,16 @@
       iframeMap.set(index, iframe);
 
       // Set up header info
-      avatar.src = `https://images.websim.ai/avatar/${comment.username}`;
-      username.href = `https://websim.ai/@${comment.username}`;
-      username.textContent = '@' + comment.username;
+      avatar.src = `https://images.websim.ai/avatar/${comment.author.username}`;
+      username.href = `https://websim.ai/@${comment.author.username}`;
+      username.textContent = '@' + comment.author.username;
       timestamp.textContent = await formatTimestamp(comment.created_at);
 
       // Show pinned status
       if (comment.pinned) {
         pinnedBadge.style.display = 'inline';
         if (comment.pinned_by) {
-          pinnedBadge.title = `Pinned by @${comment.pinned_by}`;
+          pinnedBadge.title = `Pinned by @${comment.pinned_by.username}`;
         }
       }
 
@@ -253,7 +265,7 @@
           </style>
         </head>
         <body>
-          ${comment.content || ''}
+          ${comment.raw_content || ''}
           <script>
             window.addEventListener('load', () => {
               const height = document.body.scrollHeight;
@@ -299,8 +311,7 @@
           pinned_by: comment.pinned_by?.username,
           reactions: JSON.stringify(comment.reactions),
           reply_count: comment.reply_count,
-          created_at: comment.created_at,
-          username: comment.author.username
+          created_at: comment.created_at
         });
         
         console.log('Successfully synced comment to database:', comment.id);
@@ -313,6 +324,8 @@
       if (!projectId) {
         projectId = (await window.websim.getCurrentProject()).id;
       }
+
+      const user = await getCurrentUser();
       
       // Get all comments from API
       const response = await fetch(`/api/v1/projects/${projectId}/comments`);
@@ -330,7 +343,7 @@
 
       // Check each API comment and sync if needed
       const syncPromises = data.comments.data.map(async ({comment}) => {
-        if (!existingCommentMap.has(comment.id)) {
+        if (!existingCommentMap.has(comment.id) && comment.author.username === user.username) {
           await syncCommentToDatabase(comment);
         }
       });
@@ -339,24 +352,10 @@
       await Promise.all(syncPromises);
 
       const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
-      lastCommentTimestamp = latestTimestamp;
-    }
-
-    // Function to render all comments from database
-    async function renderCommentsFromDatabase(checkNewOnly = false) {
-      if (!projectId) {
-        projectId = (await window.websim.getCurrentProject()).id;
+      
+      if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
+        return;
       }
-
-      // Get all comments from the database
-      const dbComments = room.collection('comments')
-                              .filter({ project_id: projectId })
-                              .getList();
-      
-      if (dbComments.length === 0) return;
-      
-      // Sort comments by created_at (newest first)
-      dbComments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       
       if (!checkNewOnly) {
         document.getElementById('comments').innerHTML = '';
@@ -367,24 +366,9 @@
       const iframeMap = new Map();
       const blobUrls = [];
 
-      // Track newly rendered comments to animate
-      const newCommentIds = new Set();
-      if (checkNewOnly && window.lastRenderedComments) {
-        dbComments.forEach(comment => {
-          if (!window.lastRenderedComments.has(comment.comment_id)) {
-            newCommentIds.add(comment.comment_id);
-          }
-        });
-      }
-      
-      // Save current comment IDs for next comparison
-      window.lastRenderedComments = new Set(dbComments.map(comment => comment.comment_id));
-
-      // Render comments
-      for (const [index, comment] of dbComments.entries()) {
-        const isNewComment = newCommentIds.has(comment.comment_id);
-        
-        if (checkNewOnly && !isNewComment) {
+      // Render new comments
+      for (const [index, {comment}] of data.comments.data.entries()) {
+        if (checkNewOnly && lastCommentTimestamp && new Date(comment.created_at) <= lastCommentTimestamp) {
           continue;
         }
 
@@ -406,6 +390,8 @@
         }
       }
 
+      lastCommentTimestamp = latestTimestamp;
+
       // Listen for iframe resize messages
       window.addEventListener('message', (e) => {
         if (e.data?.type === 'resize') {
@@ -423,26 +409,16 @@
     }
 
     // Initial load
-    async function initialize() {
-      // First sync comments from API to database
-      await loadAndSyncComments();
-      
-      // Then render from database
-      await renderCommentsFromDatabase();
-    }
-
-    initialize();
+    loadAndSyncComments();
 
     // Set up periodic checking for new comments
-    setInterval(async () => {
-      await loadAndSyncComments(true);
-      await renderCommentsFromDatabase(true);
+    setInterval(() => {
+      loadAndSyncComments(true);
     }, REFRESH_INTERVAL);
 
-    // Subscribe to database changes to re-render when comments are updated
+    // Subscribe to database changes
     room.collection('comments').subscribe(function(comments) {
       console.log('Database comments updated:', comments);
-      renderCommentsFromDatabase(true);
     });
   </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
