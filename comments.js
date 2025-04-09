@@ -243,21 +243,13 @@ async function loadAndSyncComments(checkNewOnly = false) {
 
     const user = await getCurrentUser();
     
-    // Get all comments from API
-    const response = await fetch(`/api/v1/projects/${projectId}/comments`);
-    const data = await response.json();
-    
-    if (data.comments.data.length === 0) return;
-
-    // Get ALL comments from database first 
+    // First get ALL comments from database
     const dbComments = await room.collection('comments').getList();
     const existingCommentIds = new Set(dbComments.map(c => c.comment_id));
-
-    const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
     
-    if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
-      return;
-    }
+    // Then get comments from API
+    const response = await fetch(`/api/v1/projects/${projectId}/comments`);
+    const data = await response.json();
     
     if (!checkNewOnly) {
       document.getElementById('comments').innerHTML = '';
@@ -267,7 +259,7 @@ async function loadAndSyncComments(checkNewOnly = false) {
     const template = document.getElementById('comment-template');
     const blobUrls = [];
 
-    // Process comments in reverse order when checking new only
+    // Process comments from API in reverse order when checking new only
     let commentsToProcess = checkNewOnly ? 
       data.comments.data.filter(({comment}) => 
         !lastCommentTimestamp || new Date(comment.created_at) > lastCommentTimestamp
@@ -284,9 +276,17 @@ async function loadAndSyncComments(checkNewOnly = false) {
       return b.comment.pinned ? 1 : -1;
     });
 
+    if (data.comments.data.length > 0) {
+      const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
+      if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
+        return;
+      }
+      lastCommentTimestamp = latestTimestamp;
+    }
+
     // Render comments
     for (const [index, {comment}] of commentsToProcess.entries()) {
-      // Add gold outline check before rendering
+      // Check if comment is in database
       const isInDatabase = existingCommentIds.has(comment.id);
       const {container, blobUrl} = await renderComment(
         comment, 
@@ -300,7 +300,12 @@ async function loadAndSyncComments(checkNewOnly = false) {
       
       // After rendering, if it's the current user's comment and not already in database, sync it
       if (comment.author.username === user.username && !isInDatabase) {
-        await syncCommentToDatabase(comment);
+        const synced = await syncCommentToDatabase(comment);
+        if (synced) {
+          // Update UI to show gold outline
+          const commentElement = container.querySelector('.comment-container');
+          commentElement.classList.add('in-database');
+        }
       }
       
       if (checkNewOnly) {
@@ -330,8 +335,6 @@ async function loadAndSyncComments(checkNewOnly = false) {
         commentsDiv.appendChild(container);
       }
     }
-
-    lastCommentTimestamp = latestTimestamp;
 
     // Clean up blob URLs
     window.addEventListener('unload', () => {
@@ -387,6 +390,7 @@ setInterval(checkForNewGoldComments, DB_CHECK_INTERVAL);
 // Subscribe to database changes
 room.collection('comments').subscribe(function(comments) {
   console.log('Database comments updated:', comments);
+  checkForNewGoldComments(); // Update UI immediately when database changes
 });
 
 // Listen for iframe resize messages
