@@ -69,8 +69,11 @@
       
       // Store blob URLs to revoke later
       const blobUrls = [];
+      
+      // Keep track of iframes by index
+      const iframeMap = new Map();
 
-      data.comments.data.forEach(({comment}) => {
+      data.comments.data.forEach(({comment}, index) => {
         const container = template.content.cloneNode(true);
         
         // Set up header info
@@ -78,6 +81,9 @@
         const username = container.querySelector('.username');
         const timestamp = container.querySelector('.timestamp');
         const iframe = container.querySelector('iframe');
+
+        // Store iframe reference with index
+        iframeMap.set(index, iframe);
 
         avatar.src = `https://images.websim.ai/avatar/${comment.author.username}`;
         username.href = `https://websim.ai/@${comment.author.username}`;
@@ -106,7 +112,11 @@
               // Adjust iframe height to content
               window.addEventListener('load', () => {
                 const height = document.body.scrollHeight;
-                window.parent.postMessage({type: 'resize', height}, '*');
+                window.parent.postMessage({
+                  type: 'resize', 
+                  height,
+                  index: ${index}
+                }, '*');
               });
            <\/script>
           </body>
@@ -123,11 +133,9 @@
       // Listen for iframe resize messages
       window.addEventListener('message', (e) => {
         if (e.data?.type === 'resize') {
-          const iframes = document.querySelectorAll('.comment-iframe');
-          for (const iframe of iframes) {
-            if (iframe.src === e.source.location.href) {
-              iframe.style.height = e.data.height + 'px';
-            }
+          const iframe = iframeMap.get(e.data.index);
+          if (iframe) {
+            iframe.style.height = e.data.height + 'px';
           }
         }
       });
