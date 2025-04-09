@@ -127,6 +127,7 @@
     let lastCommentTimestamp = null;
     let projectId = null;
     let currentUser = null;
+    const iframeMap = new Map();
 
     // Add emoji mapping object
     const emojiMap = {
@@ -345,7 +346,6 @@
 
       const commentsDiv = document.getElementById('comments');
       const template = document.getElementById('comment-template');
-      const iframeMap = new Map();
       const blobUrls = [];
 
       // Render new comments
