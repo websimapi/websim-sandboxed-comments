@@ -42,6 +42,40 @@
       margin-left: 10px;
       font-size: 0.9em;
     }
+
+    .comment-metadata {
+      color: #666;
+      font-size: 0.9em;
+      margin: 10px 0;
+    }
+
+    .reaction-list {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .reaction {
+      background: #f0f0f0;
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 0.9em;
+    }
+
+    .reply-count {
+      color: #0066cc;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+
+    .pinned-badge {
+      background: #ffd700;
+      color: #000;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.8em;
+      margin-left: 10px;
+    }
   </style>
 </head>
 <body>
@@ -53,82 +87,159 @@
         <img class="avatar">
         <a class="username" target="_blank"></a>
         <span class="timestamp"></span>
+        <span class="pinned-badge" style="display:none">PINNED</span>
+      </div>
+      <div class="comment-metadata">
+        <div class="reaction-list"></div>
+        <div class="reply-count"></div>
       </div>
       <iframe sandbox="allow-scripts" class="comment-iframe" scrolling="no"></iframe>
     </div>
   </template>
 
   <script>
-    async function loadComments() {
-      const projectId = (await window.websim.getCurrentProject()).id;
+    const REFRESH_INTERVAL = 30000; // Check for new comments every 30 seconds
+    let lastCommentTimestamp = null;
+    let projectId = null;
+
+    async function formatTimestamp(timestamp) {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diff = now - date;
+      
+      if (diff < 60000) return 'just now';
+      if (diff < 3600000) return `${Math.floor(diff/60000)}m ago`;
+      if (diff < 86400000) return `${Math.floor(diff/3600000)}h ago`;
+      if (diff < 604800000) return `${Math.floor(diff/86400000)}d ago`;
+      
+      return date.toLocaleDateString();
+    }
+
+    function renderReactions(reactions, container) {
+      container.innerHTML = reactions.map(reaction => `
+        <span class="reaction">
+          ${reaction.emoji.name} ${reaction.count}
+        </span>
+      `).join('');
+    }
+
+    async function renderComment(comment, template, commentsDiv, index, iframeMap) {
+      const container = template.content.cloneNode(true);
+      
+      const avatar = container.querySelector('.avatar');
+      const username = container.querySelector('.username');
+      const timestamp = container.querySelector('.timestamp');
+      const pinnedBadge = container.querySelector('.pinned-badge');
+      const reactionList = container.querySelector('.reaction-list');
+      const replyCount = container.querySelector('.reply-count');
+      const iframe = container.querySelector('iframe');
+
+      iframeMap.set(index, iframe);
+
+      // Set up header info
+      avatar.src = `https://images.websim.ai/avatar/${comment.author.username}`;
+      username.href = `https://websim.ai/@${comment.author.username}`;
+      username.textContent = '@' + comment.author.username;
+      timestamp.textContent = await formatTimestamp(comment.created_at);
+
+      // Show pinned status
+      if (comment.pinned) {
+        pinnedBadge.style.display = 'inline';
+        if (comment.pinned_by) {
+          pinnedBadge.title = `Pinned by @${comment.pinned_by.username}`;
+        }
+      }
+
+      // Show reactions
+      renderReactions(comment.reactions, reactionList);
+
+      // Show reply count
+      if (comment.reply_count > 0) {
+        replyCount.textContent = `${comment.reply_count} ${comment.reply_count === 1 ? 'reply' : 'replies'}`;
+      }
+
+      // Create sandboxed comment content
+      const html = `<!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <style>
+            body { 
+              margin: 0;
+              font-family: system-ui, sans-serif;
+              line-height: 1.5;
+            }
+            p { margin: 0 0 1em; }
+            a { color: #0066cc; }
+            img { max-width: 100%; height: auto; }
+          </style>
+        </head>
+        <body>
+          ${comment.raw_content || ''}
+          <script>
+            window.addEventListener('load', () => {
+              const height = document.body.scrollHeight;
+              window.parent.postMessage({
+                type: 'resize', 
+                height,
+                index: ${index}
+              }, '*');
+            });
+          <\/script>
+        </body>
+        </html>`;
+
+      const blob = new Blob([html], {type: 'text/html'});
+      const blobUrl = URL.createObjectURL(blob);
+      iframe.src = blobUrl;
+      
+      return {container, blobUrl};
+    }
+
+    async function loadComments(checkNewOnly = false) {
+      if (!projectId) {
+        projectId = (await window.websim.getCurrentProject()).id;
+      }
+      
       const response = await fetch(`/api/v1/projects/${projectId}/comments`);
       const data = await response.json();
       
+      if (data.comments.data.length === 0) return;
+
+      const latestTimestamp = new Date(data.comments.data[0].comment.created_at);
+      
+      // If checking for new comments and no new ones exist, return
+      if (checkNewOnly && (!lastCommentTimestamp || latestTimestamp <= lastCommentTimestamp)) {
+        return;
+      }
+      
+      if (!checkNewOnly) {
+        // Clear existing comments if doing full load
+        document.getElementById('comments').innerHTML = '';
+      }
+
       const commentsDiv = document.getElementById('comments');
       const template = document.getElementById('comment-template');
-      
-      // Store blob URLs to revoke later
-      const blobUrls = [];
-      
-      // Keep track of iframes by index
       const iframeMap = new Map();
+      const blobUrls = [];
 
-      data.comments.data.forEach(({comment}, index) => {
-        const container = template.content.cloneNode(true);
-        
-        // Set up header info
-        const avatar = container.querySelector('.avatar');
-        const username = container.querySelector('.username');
-        const timestamp = container.querySelector('.timestamp');
-        const iframe = container.querySelector('iframe');
+      // Render new comments
+      for (const [index, {comment}] of data.comments.data.entries()) {
+        if (checkNewOnly && lastCommentTimestamp && new Date(comment.created_at) <= lastCommentTimestamp) {
+          continue;
+        }
 
-        // Store iframe reference with index
-        iframeMap.set(index, iframe);
-
-        avatar.src = `https://images.websim.ai/avatar/${comment.author.username}`;
-        username.href = `https://websim.ai/@${comment.author.username}`;
-        username.textContent = '@' + comment.author.username;
-        timestamp.textContent = new Date(comment.created_at).toLocaleDateString();
-
-        // Create sandboxed comment content
-        const html = `<!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="UTF-8">
-            <style>
-              body { 
-                margin: 0;
-                font-family: system-ui, sans-serif;
-                line-height: 1.5;
-              }
-              p { margin: 0 0 1em; }
-              a { color: #0066cc; }
-              img { max-width: 100%; height: auto; }
-            </style>
-          </head>
-          <body>
-            ${comment.raw_content || ''}
-            <script>
-              // Adjust iframe height to content
-              window.addEventListener('load', () => {
-                const height = document.body.scrollHeight;
-                window.parent.postMessage({
-                  type: 'resize', 
-                  height,
-                  index: ${index}
-                }, '*');
-              });
-           <\/script>
-          </body>
-          </html>`;
-
-        const blob = new Blob([html], {type: 'text/html'});
-        const blobUrl = URL.createObjectURL(blob);
+        const {container, blobUrl} = await renderComment(comment, template, commentsDiv, index, iframeMap);
         blobUrls.push(blobUrl);
-        iframe.src = blobUrl;
+        
+        if (checkNewOnly) {
+          commentsDiv.insertBefore(container, commentsDiv.firstChild);
+        } else {
+          commentsDiv.appendChild(container);
+        }
+      }
 
-        commentsDiv.appendChild(container);
-      });
+      lastCommentTimestamp = latestTimestamp;
 
       // Listen for iframe resize messages
       window.addEventListener('message', (e) => {
@@ -146,7 +257,13 @@
       });
     }
 
+    // Initial load
     loadComments();
+
+    // Set up periodic checking for new comments
+    setInterval(() => {
+      loadComments(true);
+    }, REFRESH_INTERVAL);
   </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
