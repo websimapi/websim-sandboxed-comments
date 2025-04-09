@@ -422,26 +422,25 @@
         const dbComments = await room.collection('comments').getList();
         const newGoldCommentIds = new Set(dbComments.map(c => c.comment_id));
 
-        // Find comments that weren't gold before but are now
-        const commentsToUpdate = Array.from(newGoldCommentIds).filter(id => !goldCommentIds.has(id));
+        // Get all comment containers from the page
+        const commentContainers = document.querySelectorAll('.comment-container');
+        
+        commentContainers.forEach(container => {
+          const commentId = container.dataset.commentId;
+          
+          // If comment is in database but doesn't have gold outline
+          if (newGoldCommentIds.has(commentId) && !container.classList.contains('in-database')) {
+            // Add gold outline with a nice transition
+            container.style.transition = 'border-color 0.5s ease-in-out, box-shadow 0.5s ease-in-out';
+            container.classList.add('in-database');
+            // Update our tracking set
+            goldCommentIds.add(commentId);
+          }
+        });
 
-        if (commentsToUpdate.length > 0) {
-          // Update the goldCommentIds set
-          goldCommentIds = newGoldCommentIds;
-
-          // Find and update the UI for newly gold comments
-          const commentContainers = document.querySelectorAll('.comment-container');
-          commentContainers.forEach(container => {
-            // Extract comment ID from the iframe src or data attribute
-            const commentId = container.dataset.commentId;
-            
-            if (commentsToUpdate.includes(commentId)) {
-              // Add gold outline with a nice transition
-              container.style.transition = 'border-color 0.5s ease-in-out, box-shadow 0.5s ease-in-out';
-              container.classList.add('in-database');
-            }
-          });
-        }
+        // Update the goldCommentIds set to match database state
+        goldCommentIds = newGoldCommentIds;
+        
       } catch (err) {
         console.error('Error checking for new gold comments:', err);
       }
