@@ -66,6 +66,9 @@
       
       const commentsDiv = document.getElementById('comments');
       const template = document.getElementById('comment-template');
+      
+      // Store blob URLs to revoke later
+      const blobUrls = [];
 
       data.comments.data.forEach(({comment}) => {
         const container = template.content.cloneNode(true);
@@ -82,8 +85,7 @@
         timestamp.textContent = new Date(comment.created_at).toLocaleDateString();
 
         // Create sandboxed comment content
-        const html = `
-          <!DOCTYPE html>
+        const html = `<!DOCTYPE html>
           <html>
           <head>
             <meta charset="UTF-8">
@@ -106,21 +108,21 @@
                 const height = document.body.scrollHeight;
                 window.parent.postMessage({type: 'resize', height}, '*');
               });
-            </script>
-          <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-</body>
-          </html>
-        `;
+           <\/script>
+          </body>
+          </html>`;
 
         const blob = new Blob([html], {type: 'text/html'});
-        iframe.src = URL.createObjectURL(blob);
+        const blobUrl = URL.createObjectURL(blob);
+        blobUrls.push(blobUrl);
+        iframe.src = blobUrl;
 
         commentsDiv.appendChild(container);
       });
 
       // Listen for iframe resize messages
       window.addEventListener('message', (e) => {
-        if (e.data.type === 'resize') {
+        if (e.data?.type === 'resize') {
           const iframes = document.querySelectorAll('.comment-iframe');
           for (const iframe of iframes) {
             if (iframe.src === e.source.location.href) {
@@ -129,10 +131,15 @@
           }
         }
       });
+
+      // Clean up blob URLs when navigating away
+      window.addEventListener('unload', () => {
+        blobUrls.forEach(URL.revokeObjectURL);
+      });
     }
 
     loadComments();
   </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
-
